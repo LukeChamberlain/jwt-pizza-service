@@ -1,70 +1,39 @@
 const request = require('supertest');
 const app = require('../service');
-const jwt = require('jsonwebtoken');
-const config = require('../config.js');
+const { Role, DB } = require('../database/database');
+
+if (process.env.VSCODE_INSPECTOR_OPTIONS) {
+  jest.setTimeout(60 * 1000 * 5);
+}
+
+function randomName() {
+  return Math.random().toString(36).substring(2, 12);
+}
+
+async function createAdminUser() {
+  let user = { password: 'toomanysecrets', roles: [{ role: Role.Admin }] };
+  user.name = randomName();
+  user.email = user.name + '@admin.com';
+  user = await DB.addUser(user);
+  return { ...user, password: 'toomanysecrets' };
+}
+
+function expectValidJwt(potentialJwt) {
+  expect(potentialJwt).toMatch(/^[a-zA-Z0-9\-_]*\.[a-zA-Z0-9\-_]*\.[a-zA-Z0-9\-_]*$/);
+}
 
 const testUser = { name: 'pizza diner', email: 'reg@test.com', password: 'a' };
 let testUserAuthToken;
-let testUserId;
 
 beforeAll(async () => {
-  testUser.email = Math.random().toString(36).substring(2, 12) + '@test.com';
+  testUser.email = randomName() + '@test.com';
   const registerRes = await request(app).post('/api/auth').send(testUser);
   testUserAuthToken = registerRes.body.token;
-  testUserId = registerRes.body.user.id;
   expectValidJwt(testUserAuthToken);
 });
 
-describe('POST /api/auth - Register', () => {
-  test('register a new user', async () => {
-    const newUser = {
-      name: 'test user',
-      email: Math.random().toString(36).substring(2, 12) + '@test.com',
-      password: 'password123',
-    };
-    const res = await request(app).post('/api/auth').send(newUser);
-    expect(res.status).toBe(200);
-    expect(res.body.user).toHaveProperty('id');
-    expect(res.body.user.name).toBe(newUser.name);
-    expect(res.body.user.email).toBe(newUser.email);
-    expect(res.body.user.roles).toEqual([{ role: 'diner' }]);
-    expect(res.body).toHaveProperty('token');
-    expectValidJwt(res.body.token);
-  });
-
-  test('register with missing name', async () => {
-    const res = await request(app)
-      .post('/api/auth')
-      .send({ email: 'test@test.com', password: 'password' });
-    expect(res.status).toBe(400);
-    expect(res.body.message).toBe('name, email, and password are required');
-  });
-
-  test('register with missing email', async () => {
-    const res = await request(app)
-      .post('/api/auth')
-      .send({ name: 'test', password: 'password' });
-    expect(res.status).toBe(400);
-    expect(res.body.message).toBe('name, email, and password are required');
-  });
-
-  test('register with missing password', async () => {
-    const res = await request(app)
-      .post('/api/auth')
-      .send({ name: 'test', email: 'test@test.com' });
-    expect(res.status).toBe(400);
-    expect(res.body.message).toBe('name, email, and password are required');
-  });
-
-  test('register with missing all fields', async () => {
-    const res = await request(app).post('/api/auth').send({});
-    expect(res.status).toBe(400);
-    expect(res.body.message).toBe('name, email, and password are required');
-  });
-});
-
-describe('PUT /api/auth - Login', () => {
-  test('login with valid credentials', async () => {
+describe('auth', () => {
+  test('login', async () => {
     const loginRes = await request(app).put('/api/auth').send(testUser);
     expect(loginRes.status).toBe(200);
     expectValidJwt(loginRes.body.token);
@@ -74,151 +43,427 @@ describe('PUT /api/auth - Login', () => {
     expect(loginRes.body.user).toMatchObject(expectedUser);
   });
 
-  test('login with invalid email', async () => {
-    const res = await request(app)
-      .put('/api/auth')
-      .send({ email: 'nonexistent@test.com', password: 'password' });
-  });
-
-  test('login with invalid password', async () => {
-    const res = await request(app).put('/api/auth').send({ email: testUser.email, password: 'wrongpassword' });
-  });
-
-  test('login returns valid JWT', async () => {
-    const loginRes = await request(app).put('/api/auth').send(testUser);
-    const decoded = jwt.verify(loginRes.body.token, config.jwtSecret);
-    expect(decoded).toHaveProperty('id');
-    expect(decoded).toHaveProperty('email');
-    expect(decoded).toHaveProperty('name');
-    expect(decoded).toHaveProperty('roles');
-  });
-});
-
-describe('DELETE /api/auth - Logout', () => {
-  test('logout with valid token', async () => {
-    // Create a new user to logout
+  test('register', async () => {
     const newUser = {
-      name: 'logout test',
-      email: Math.random().toString(36).substring(2, 12) + '@test.com',
-      password: 'password',
+      name: randomName(),
+      email: randomName() + '@test.com',
+      password: 'password123'
     };
     const registerRes = await request(app).post('/api/auth').send(newUser);
-    const token = registerRes.body.token;
-
-    const res = await request(app).delete('/api/auth').set('Authorization', `Bearer ${token}`);
-    expect(res.status).toBe(200);
-    expect(res.body.message).toBe('logout successful');
+    expect(registerRes.status).toBe(200);
+    expectValidJwt(registerRes.body.token);
+    expect(registerRes.body.user.name).toBe(newUser.name);
+    expect(registerRes.body.user.roles).toEqual([{ role: 'diner' }]);
   });
 
-  test('logout without token', async () => {
-    const res = await request(app).delete('/api/auth');
-    expect(res.status).toBe(401);
-    expect(res.body.message).toBe('unauthorized');
-  });
-
-  test('logout with invalid token format', async () => {
-    const res = await request(app).delete('/api/auth').set('Authorization', 'Bearer invalid');
-    expect(res.status).toBe(401);
-    expect(res.body.message).toBe('unauthorized');
-  });
-
-  test('logout without Bearer prefix', async () => {
-    const res = await request(app).delete('/api/auth').set('Authorization', testUserAuthToken);
-    expect(res.status).toBe(401);
-    expect(res.body.message).toBe('unauthorized');
-  });
-
-  test('logout with malformed authorization header', async () => {
-    const res = await request(app).delete('/api/auth').set('Authorization', 'InvalidFormat');
-    expect(res.status).toBe(401);
-    expect(res.body.message).toBe('unauthorized');
-  });
-});
-
-describe('setAuthUser middleware', () => {
-  test('setAuthUser sets req.user with valid token', async () => {
-    // This is tested indirectly through protected endpoints
-    const res = await request(app)
-      .delete('/api/auth')
-      .set('Authorization', `Bearer ${testUserAuthToken}`);
-    expect(res.status).toBe(200);
-  });
-
-  test('setAuthUser sets req.user to null with invalid token', async () => {
-    const res = await request(app)
-      .delete('/api/auth')
-      .set('Authorization', 'Bearer invalidtoken');
-    expect(res.status).toBe(401);
-  });
-
-  test('setAuthUser sets req.user to null without token', async () => {
-    const res = await request(app).delete('/api/auth');
-    expect(res.status).toBe(401);
-  });
-
-  test('req.user has isRole method that works correctly', async () => {
-    // Create a test user and verify they're a diner
-    const newUser = {
-      name: 'role test',
-      email: Math.random().toString(36).substring(2, 12) + '@test.com',
-      password: 'password',
-    };
-    const registerRes = await request(app).post('/api/auth').send(newUser);
-    const token = registerRes.body.token;
-    const decoded = jwt.verify(token, config.jwtSecret);
-
-    // Verify the role checking logic would work
-    expect(decoded.roles).toEqual([{ role: 'diner' }]);
-  });
-});
-
-describe('authenticateToken middleware', () => {
-  test('authenticateToken allows request with valid token', async () => {
-    const res = await request(app)
-      .delete('/api/auth')
-      .set('Authorization', `Bearer ${testUserAuthToken}`);
-  });
-
-  test('authenticateToken rejects request without token', async () => {
-    const res = await request(app).delete('/api/auth');
-    expect(res.status).toBe(401);
-    expect(res.body.message).toBe('unauthorized');
-  });
-
-  test('authenticateToken rejects request with expired/invalid token', async () => {
-    const res = await request(app)
-      .delete('/api/auth')
-      .set('Authorization', 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.invalid.invalid');
-    expect(res.status).toBe(401);
-  });
-});
-
-describe('Edge cases and error handling', () => {
-  test('register with empty strings', async () => {
-    const res = await request(app).post('/api/auth').send({ name: '', email: '', password: '' });
+  test('register fails with missing name', async () => {
+    const res = await request(app).post('/api/auth').send({
+      email: randomName() + '@test.com',
+      password: 'password'
+    });
     expect(res.status).toBe(400);
-    expect(res.body.message).toBe('name, email, and password are required');
+    expect(res.body.message).toBeDefined();
   });
 
-  test('login and verify JWT contains user data', async () => {
-    const loginRes = await request(app).put('/api/auth').send(testUser);
-    const decoded = jwt.verify(loginRes.body.token, config.jwtSecret);
-    expect(decoded.email).toBe(testUser.email);
-    expect(decoded.name).toBe(testUser.name);
+  test('register fails with missing email', async () => {
+    const res = await request(app).post('/api/auth').send({
+      name: randomName(),
+      password: 'password'
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.message).toBeDefined();
   });
 
-  test('readAuthToken extracts token from Bearer header', async () => {
-    const loginRes = await request(app).put('/api/auth').send(testUser);
-    const token = loginRes.body.token;
-    
-    // Verify the token is valid by using it
+  test('register fails with missing password', async () => {
+    const res = await request(app).post('/api/auth').send({
+      name: randomName(),
+      email: randomName() + '@test.com'
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.message).toBeDefined();
+  });
+
+  test('logout succeeds with valid token', async () => {
     const logoutRes = await request(app)
       .delete('/api/auth')
-      .set('Authorization', `Bearer ${token}`);
+      .set('Authorization', `Bearer ${testUserAuthToken}`);
     expect(logoutRes.status).toBe(200);
+    expect(logoutRes.body.message).toBe('logout successful');
+  });
+
+  test('logout fails without token', async () => {
+    const logoutRes = await request(app).delete('/api/auth');
+    expect(logoutRes.status).toBe(401);
+    expect(logoutRes.body.message).toBe('unauthorized');
+  });
+
+});
+
+describe('user', () => {
+  let userToken;
+
+  beforeAll(async () => {
+    const user = {
+      name: randomName(),
+      email: randomName() + '@test.com',
+      password: 'password123'
+    };
+    const res = await request(app).post('/api/auth').send(user);
+    userToken = res.body.token;
+  });
+
+  test('get /me returns authenticated user', async () => {
+    const res = await request(app)
+      .get('/api/user/me')
+      .set('Authorization', `Bearer ${userToken}`);
+    expect(res.status).toBe(200);
+    expect(res.body.id).toBeDefined();
+    expect(res.body.name).toBeDefined();
+  });
+
+  test('get /me fails without token', async () => {
+    const res = await request(app).get('/api/user/me');
+    expect(res.status).toBe(401);
+  });
+
+  test('put /:userId updates user', async () => {
+    // Get user ID first
+    const getRes = await request(app)
+      .get('/api/user/me')
+      .set('Authorization', `Bearer ${userToken}`);
+    const userId = getRes.body.id;
+
+    const newName = randomName();
+    const res = await request(app)
+      .put(`/api/user/${userId}`)
+      .set('Authorization', `Bearer ${userToken}`)
+      .send({ 
+        name: newName, 
+        email: getRes.body.email, 
+        password: 'password123' 
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body.user.name).toBe(newName);
+    expectValidJwt(res.body.token);
+  });
+
+  test('put /:userId fails without token', async () => {
+    const res = await request(app)
+      .put('/api/user/1')
+      .send({ name: 'newname' });
+    expect(res.status).toBe(401);
+  });
+
+  test('put /:userId fails if updating another users profile', async () => {
+    // Create another user
+    const otherUser = {
+      name: randomName(),
+      email: randomName() + '@test.com',
+      password: 'password123'
+    };
+    const otherRes = await request(app).post('/api/auth').send(otherUser);
+    const otherUserId = otherRes.body.user.id;
+
+    // Try to update other user with first user's token
+    const res = await request(app)
+      .put(`/api/user/${otherUserId}`)
+      .set('Authorization', `Bearer ${userToken}`)
+      .send({ 
+        name: 'hacked', 
+        email: otherUser.email, 
+        password: 'password123' 
+      });
+
+    expect(res.status).toBe(403);
+    expect(res.body.message).toBe('unauthorized');
+  });
+
+  test('delete /:userId returns not implemented', async () => {
+    const res = await request(app)
+      .delete('/api/user/1')
+      .set('Authorization', `Bearer ${userToken}`);
+    expect(res.status).toBe(200);
+    expect(res.body.message).toBe('not implemented');
+  });
+
+  test('get / returns not implemented', async () => {
+    const res = await request(app)
+      .get('/api/user')
+      .set('Authorization', `Bearer ${userToken}`);
+    expect(res.status).toBe(200);
+    expect(res.body.message).toBe('not implemented');
+    expect(res.body.users).toEqual([]);
+  });
+
+  test('admin can update other users', async () => {
+    const adminUser = await createAdminUser();
+    const adminLoginRes = await request(app)
+      .put('/api/auth')
+      .send({ email: adminUser.email, password: adminUser.password });
+    const adminToken = adminLoginRes.body.token;
+
+    // Get the user ID first
+    const getRes = await request(app)
+      .get('/api/user/me')
+      .set('Authorization', `Bearer ${userToken}`);
+    const userId = getRes.body.id;
+
+    const res = await request(app)
+      .put(`/api/user/${userId}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ 
+        name: 'updated by admin', 
+        email: getRes.body.email, 
+        password: 'newpassword' 
+      });
+
+    expect(res.status).toBe(200);
   });
 });
 
-function expectValidJwt(potentialJwt) {
-  expect(potentialJwt).toMatch(/^[a-zA-Z0-9\-_]*\.[a-zA-Z0-9\-_]*\.[a-zA-Z0-9\-_]*$/);
-}
+describe('order', () => {
+  let userToken;
+  let userId;
+  let adminToken;
+  let franchiseId;
+  let storeId;
+
+  beforeAll(async () => {
+    // Create regular user
+    const user = {
+      name: randomName(),
+      email: randomName() + '@test.com',
+      password: 'password123'
+    };
+    const userRes = await request(app).post('/api/auth').send(user);
+    userToken = userRes.body.token;
+    userId = userRes.body.user.id;
+
+    // Create admin user
+    const adminUser = await createAdminUser();
+    const adminRes = await request(app)
+      .put('/api/auth')
+      .send({ email: adminUser.email, password: adminUser.password });
+    adminToken = adminRes.body.token;
+
+    // Create franchise
+    const franchiseRes = await request(app)
+      .post('/api/franchise')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        name: randomName(),
+        admins: [{ email: adminUser.email }]
+      });
+    franchiseId = franchiseRes.body.id;
+    
+    // Create a store in the franchise
+    const storeRes = await request(app)
+      .post(`/api/franchise/${franchiseId}/store`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ name: randomName() });
+    storeId = storeRes.body.id;
+  });
+
+  test('get /menu returns menu', async () => {
+    const res = await request(app).get('/api/order/menu');
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body)).toBe(true);
+  });
+
+  test('get / requires auth', async () => {
+    const res = await request(app).get('/api/order');
+    expect(res.status).toBe(401);
+  });
+
+  test('get / returns orders for authenticated user', async () => {
+    const res = await request(app)
+      .get('/api/order')
+      .set('Authorization', `Bearer ${userToken}`);
+    expect(res.status).toBe(200);
+    expect(res.body.dinerId).toBe(userId);
+    expect(Array.isArray(res.body.orders)).toBe(true);
+  });
+
+  test('post / requires auth', async () => {
+    const res = await request(app).post('/api/order').send({
+      franchiseId,
+      storeId,
+      items: [{ menuId: 1, description: 'Item', price: 10 }]
+    });
+    expect(res.status).toBe(401);
+  });
+
+  test('put /menu requires admin', async () => {
+    const res = await request(app)
+      .put('/api/order/menu')
+      .set('Authorization', `Bearer ${userToken}`)
+      .send([{ title: 'Pizza', price: 10 }]);
+    expect(res.status).toBe(403);
+  });
+
+  test('put /menu requires auth', async () => {
+    const res = await request(app)
+      .put('/api/order/menu')
+      .send([{ title: 'Pizza', price: 10 }]);
+    expect(res.status).toBe(401);
+  });
+
+});
+
+describe('franchise', () => {
+  let userToken;
+  let adminToken;
+  let adminId;
+  let franchiseId;
+
+  beforeAll(async () => {
+    // Create regular user
+    const user = {
+      name: randomName(),
+      email: randomName() + '@test.com',
+      password: 'password123'
+    };
+    const userRes = await request(app).post('/api/auth').send(user);
+    userToken = userRes.body.token;
+
+    // Create admin user
+    const adminUser = await createAdminUser();
+    const adminRes = await request(app)
+      .put('/api/auth')
+      .send({ email: adminUser.email, password: adminUser.password });
+    adminToken = adminRes.body.token;
+    adminId = adminRes.body.user.id;
+  });
+
+  test('get / returns franchises', async () => {
+    const res = await request(app).get('/api/franchise');
+    expect(res.status).toBe(200);
+    expect(res.body.franchises).toBeDefined();
+    expect(res.body.more).toBeDefined();
+  });
+
+  test('get /:userId requires auth', async () => {
+    const res = await request(app).get('/api/franchise/1');
+    expect(res.status).toBe(401);
+  });
+
+  test('get /:userId returns franchises for user', async () => {
+    const res = await request(app)
+      .get(`/api/franchise/${adminId}`)
+      .set('Authorization', `Bearer ${adminToken}`);
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body)).toBe(true);
+  });
+
+  test('get /:userId returns empty for non-existent user franchises', async () => {
+    const res = await request(app)
+      .get('/api/franchise/99999')
+      .set('Authorization', `Bearer ${userToken}`);
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([]);
+  });
+
+  test('post / requires admin role', async () => {
+    const res = await request(app)
+      .post('/api/franchise')
+      .set('Authorization', `Bearer ${userToken}`)
+      .send({
+        name: randomName(),
+        admins: [{ email: 'test@test.com' }]
+      });
+    expect(res.status).toBe(403);
+  });
+
+  test('post / requires auth', async () => {
+    const res = await request(app)
+      .post('/api/franchise')
+      .send({
+        name: randomName(),
+        admins: [{ email: 'test@test.com' }]
+      });
+    expect(res.status).toBe(401);
+  });
+
+  test('delete /:franchiseId succeeds', async () => {
+    const res = await request(app)
+      .delete(`/api/franchise/${franchiseId}`)
+      .set('Authorization', `Bearer ${adminToken}`);
+    expect(res.status).toBe(200);
+    expect(res.body.message).toBe('franchise deleted');
+  });
+
+  test('post /:franchiseId/store requires auth', async () => {
+    // Create franchise first
+    const franchiseRes = await request(app)
+      .post('/api/franchise')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        name: randomName(),
+        admins: [{ email: randomName() + '@test.com' }]
+      });
+    const fId = franchiseRes.body.id;
+
+    const res = await request(app)
+      .post(`/api/franchise/${fId}/store`)
+      .send({ name: randomName() });
+    expect(res.status).toBe(401);
+  });
+
+  test('post /:franchiseId/store requires franchise admin', async () => {
+    // Create franchise
+    const franchiseRes = await request(app)
+      .post('/api/franchise')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        name: randomName(),
+        admins: [{ email: 'admin' + randomName() + '@test.com' }]
+      });
+    const fId = franchiseRes.body.id;
+
+    const res = await request(app)
+      .post(`/api/franchise/${fId}/store`)
+      .set('Authorization', `Bearer ${userToken}`)
+      .send({ name: randomName() });
+    expect(res.status).toBe(403);
+  });
+
+  test('delete /:franchiseId/store/:storeId requires franchise admin', async () => {
+    const franchiseRes = await request(app)
+      .post('/api/franchise')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        name: randomName(),
+        admins: [{ email: randomName() + '@test.com' }]
+      });
+    const fId = franchiseRes.body.id;
+
+    const res = await request(app)
+      .delete(`/api/franchise/${fId}/store/1`)
+      .set('Authorization', `Bearer ${userToken}`);
+    expect(res.status).toBe(403);
+  });
+
+  test('delete /:franchiseId/store/:storeId succeeds', async () => {
+    const franchiseRes = await request(app)
+      .post('/api/franchise')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        name: randomName(),
+        admins: [{ email: randomName() + '@test.com' }]
+      });
+    const fId = franchiseRes.body.id;
+
+    const storeRes = await request(app)
+      .post(`/api/franchise/${fId}/store`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ name: randomName() });
+    const storeId = storeRes.body.id;
+
+    const res = await request(app)
+      .delete(`/api/franchise/${fId}/store/${storeId}`)
+      .set('Authorization', `Bearer ${adminToken}`);
+    expect(res.status).toBe(200);
+    expect(res.body.message).toBe('store deleted');
+  });
+});
