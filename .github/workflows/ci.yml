@@ -67,41 +67,40 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           printf '{"version": "%s" }' "$version" > src/version.json
 
-          - name: Update coverage
-          run: |
-            echo "=== Debugging Coverage ==="
-            echo "Current directory: $(pwd)"
-            echo "Listing all files in current directory:"
-            ls -la
+      - name: Update coverage
+        run: |
+          echo "=== Debugging Coverage ==="
+          echo "Current directory: $(pwd)"
+          echo "Listing all files in current directory:"
+          ls -la
+          echo ""
+          echo "Checking for coverage directory:"
+          if [ -d coverage ]; then
+            echo "Coverage directory exists"
+            echo "Contents of coverage/:"
+            ls -la coverage/
+          else
+            echo "Coverage directory does NOT exist"
+          fi
+          echo ""
+          echo "Checking for coverage-summary.json specifically:"
+          if [ -f coverage/coverage-summary.json ]; then
+            echo "File found! Contents:"
+            cat coverage/coverage-summary.json | head -20
             echo ""
-            echo "Checking for coverage directory:"
-            if [ -d coverage ]; then
-              echo "Coverage directory exists"
-              echo "Contents of coverage/:"
-              ls -la coverage/
-            else
-              echo "Coverage directory does NOT exist"
-            fi
-            echo ""
-            echo "Checking for coverage-summary.json specifically:"
-            if [ -f coverage/coverage-summary.json ]; then
-              echo "File found! Contents:"
-              cat coverage/coverage-summary.json | head -20
-              echo ""
-              echo "Attempting to extract coverage percentage..."
-              coverage=$(jq '.total.lines.pct' coverage/coverage-summary.json 2>&1)
-              echo "Coverage value: $coverage"
-            else
-              echo "coverage-summary.json NOT found"
-              coverage="0"
-            fi
-            
-            if [ -z "$coverage" ] || [ "$coverage" = "null" ]; then
-              coverage="0"
-            fi
-            
-            echo "Final coverage: $coverage%"
-            color=$(echo "$coverage < 80" | bc | awk '{if ($1) print "red"; else print "green"}')
-            echo "Color: $color"
-            curl -s -X POST "https://pizza-factory.cs329.click/api/badge/${{ secrets.NET_ID }}/jwtpizzaservicecoverage?label=Coverage&value=$coverage%25&color=$color" -H "authorization: bearer ${{ secrets.FACTORY_API_KEY }}"
-  
+            echo "Attempting to extract coverage percentage..."
+            coverage=$(jq '.total.lines.pct' coverage/coverage-summary.json 2>&1)
+            echo "Coverage value: $coverage"
+          else
+            echo "coverage-summary.json NOT found"
+            coverage="0"
+          fi
+          
+          if [ -z "$coverage" ] || [ "$coverage" = "null" ]; then
+            coverage="0"
+          fi
+          
+          echo "Final coverage: $coverage%"
+          color=$(echo "$coverage < 80" | bc | awk '{if ($1) print "red"; else print "green"}')
+          echo "Color: $color"
+          curl -s -X POST "https://pizza-factory.cs329.click/api/badge/${{ secrets.NET_ID }}/jwtpizzaservicecoverage?label=Coverage&value=$coverage%25&color=$color" -H "authorization: bearer ${{ secrets.FACTORY_API_KEY }}"
