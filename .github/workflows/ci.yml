@@ -159,3 +159,11 @@ jobs:
             --push .
       
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:latest" >> $GITHUB_OUTPUT
+
+      - name: Deploy to ECS
+        run: |
+          aws ecs update-service \
+            --cluster jwt-pizza-service \
+            --service jwt-pizza-service \
+            --force-new-deployment \
+            --region us-east-1
