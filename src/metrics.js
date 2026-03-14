@@ -1,5 +1,5 @@
-const os = require('os');
-const config = require('./config');
+const os = require("os");
+const config = require("./config");
 
 const requests = {};
 
@@ -65,13 +65,23 @@ function getMemoryUsagePercentage() {
   return memoryUsage.toFixed(2);
 }
 
-
 function getAvgPizzaLatency() {
   if (purchaseMetrics.pizzaPurchaseCount === 0) return 0;
-  return parseFloat((purchaseMetrics.totalPizzaLatency / purchaseMetrics.pizzaPurchaseCount).toFixed(2));
+  return parseFloat(
+    (
+      purchaseMetrics.totalPizzaLatency / purchaseMetrics.pizzaPurchaseCount
+    ).toFixed(2)
+  );
 }
 
-function createMetric(metricName, metricValue, metricUnit, metricType, valueType, attributes) {
+function createMetric(
+  metricName,
+  metricValue,
+  metricUnit,
+  metricType,
+  valueType,
+  attributes
+) {
   attributes = { ...attributes, source: config.metrics.source };
 
   const metric = {
@@ -95,8 +105,9 @@ function createMetric(metricName, metricValue, metricUnit, metricType, valueType
     });
   });
 
-  if (metricType === 'sum') {
-    metric[metricType].aggregationTemporality = 'AGGREGATION_TEMPORALITY_CUMULATIVE';
+  if (metricType === "sum") {
+    metric[metricType].aggregationTemporality =
+      "AGGREGATION_TEMPORALITY_CUMULATIVE";
     metric[metricType].isMonotonic = true;
   }
 
@@ -104,6 +115,8 @@ function createMetric(metricName, metricValue, metricUnit, metricType, valueType
 }
 
 function sendMetricToGrafana(metrics) {
+  console.log("Sending metrics with accountId:", config.metrics.accountId);
+  console.log("API key starts with:", config.metrics.apiKey?.substring(0, 10));
   const body = {
     resourceMetrics: [
       {
@@ -117,11 +130,11 @@ function sendMetricToGrafana(metrics) {
   };
 
   fetch(config.metrics.endpointUrl, {
-    method: 'POST',
+    method: "POST",
     body: JSON.stringify(body),
     headers: {
       Authorization: `Bearer ${config.metrics.accountId}:${config.metrics.apiKey}`,
-      'Content-Type': 'application/json',
+      "Content-Type": "application/json",
     },
   })
     .then((response) => {
@@ -132,7 +145,7 @@ function sendMetricToGrafana(metrics) {
       }
     })
     .catch((error) => {
-      console.error('Error pushing metrics to Grafana:', error.message);
+      console.error("Error pushing metrics to Grafana:", error.message);
     });
 }
 
@@ -142,26 +155,101 @@ function sendMetricsPeriodically(period = 10000) {
       const metrics = [];
 
       Object.keys(requests).forEach((endpoint) => {
-        metrics.push(createMetric('request', requests[endpoint], '1', 'sum', 'asInt', { endpoint }));
+        metrics.push(
+          createMetric("request", requests[endpoint], "1", "sum", "asInt", {
+            endpoint,
+          })
+        );
       });
 
-      metrics.push(createMetric('auth', authMetrics.successfulLogins, '1', 'sum', 'asInt', { result: 'success' }));
-      metrics.push(createMetric('auth', authMetrics.failedLogins, '1', 'sum', 'asInt', { result: 'failure' }));
+      metrics.push(
+        createMetric(
+          "auth",
+          authMetrics.successfulLogins,
+          "1",
+          "sum",
+          "asInt",
+          { result: "success" }
+        )
+      );
+      metrics.push(
+        createMetric("auth", authMetrics.failedLogins, "1", "sum", "asInt", {
+          result: "failure",
+        })
+      );
 
-      metrics.push(createMetric('users', userMetrics.activeUsers, '1', 'gauge', 'asInt', {}));
+      metrics.push(
+        createMetric(
+          "users",
+          userMetrics.activeUsers,
+          "1",
+          "gauge",
+          "asInt",
+          {}
+        )
+      );
 
-      metrics.push(createMetric('cpu', getCpuUsagePercentage(), '%', 'gauge', 'asDouble', {}));
-      metrics.push(createMetric('memory', getMemoryUsagePercentage(), '%', 'gauge', 'asDouble', {}));
+      metrics.push(
+        createMetric(
+          "cpu",
+          getCpuUsagePercentage(),
+          "%",
+          "gauge",
+          "asDouble",
+          {}
+        )
+      );
+      metrics.push(
+        createMetric(
+          "memory",
+          getMemoryUsagePercentage(),
+          "%",
+          "gauge",
+          "asDouble",
+          {}
+        )
+      );
 
-      metrics.push(createMetric('pizza', purchaseMetrics.pizzasSold, '1', 'sum', 'asInt', { type: 'sold' }));
-      metrics.push(createMetric('pizza', purchaseMetrics.creationFailures, '1', 'sum', 'asInt', { type: 'failure' }));
-      metrics.push(createMetric('revenue', purchaseMetrics.revenue, 'USD', 'sum', 'asDouble', {}));
+      metrics.push(
+        createMetric("pizza", purchaseMetrics.pizzasSold, "1", "sum", "asInt", {
+          type: "sold",
+        })
+      );
+      metrics.push(
+        createMetric(
+          "pizza",
+          purchaseMetrics.creationFailures,
+          "1",
+          "sum",
+          "asInt",
+          { type: "failure" }
+        )
+      );
+      metrics.push(
+        createMetric(
+          "revenue",
+          purchaseMetrics.revenue,
+          "USD",
+          "sum",
+          "asDouble",
+          {}
+        )
+      );
 
-      metrics.push(createMetric('latency', getAvgPizzaLatency(), 'ms', 'gauge', 'asDouble', { type: 'pizza' }));
+      metrics.push(
+        createMetric(
+          "latency",
+          getAvgPizzaLatency(),
+          "ms",
+          "gauge",
+          "asDouble",
+          { type: "pizza" }
+        )
+      );
 
       sendMetricToGrafana(metrics);
     } catch (error) {
-      console.error('Error sending metrics:', error);
+      console.error("Error sending metrics:", error);
     }
   }, period);
 
