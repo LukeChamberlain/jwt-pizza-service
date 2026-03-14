@@ -53,6 +53,8 @@ app.use((err, req, res, next) => {
   next();
 });
 
-metrics.sendMetricsPeriodically(10000);
+if (process.env.NODE_ENV !== 'test') {
+  metrics.sendMetricsPeriodically(10000);
+}
 
 module.exports = app;
