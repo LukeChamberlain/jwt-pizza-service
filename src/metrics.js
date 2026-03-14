@@ -1,6 +1,10 @@
 const os = require("os");
 const config = require("./config");
 
+// ========================
+// Metric Counters & State
+// ========================
+
 const requests = {};
 
 const authMetrics = {
@@ -20,9 +24,26 @@ const purchaseMetrics = {
   pizzaPurchaseCount: 0,
 };
 
+// latencyMetrics must be at the top level so requestTracker can access it
+const latencyMetrics = {
+  totalServiceLatency: 0,
+  serviceRequestCount: 0,
+};
+
+// ========================
+// Public API
+// ========================
+
 function requestTracker(req, res, next) {
+  const start = Date.now();
   const endpoint = `[${req.method}] ${req.path}`;
   requests[endpoint] = (requests[endpoint] || 0) + 1;
+
+  res.on("finish", () => {
+    latencyMetrics.totalServiceLatency += Date.now() - start;
+    latencyMetrics.serviceRequestCount++;
+  });
+
   next();
 }
 
@@ -52,6 +73,10 @@ function pizzaPurchase(success, latencyMs, price) {
   purchaseMetrics.pizzaPurchaseCount++;
 }
 
+// ========================
+// System Metrics
+// ========================
+
 function getCpuUsagePercentage() {
   const cpuUsage = os.loadavg()[0] / os.cpus().length;
   return cpuUsage.toFixed(2) * 100;
@@ -68,20 +93,22 @@ function getMemoryUsagePercentage() {
 function getAvgPizzaLatency() {
   if (purchaseMetrics.pizzaPurchaseCount === 0) return 0;
   return parseFloat(
-    (
-      purchaseMetrics.totalPizzaLatency / purchaseMetrics.pizzaPurchaseCount
-    ).toFixed(2)
+    (purchaseMetrics.totalPizzaLatency / purchaseMetrics.pizzaPurchaseCount).toFixed(2)
   );
 }
 
-function createMetric(
-  metricName,
-  metricValue,
-  metricUnit,
-  metricType,
-  valueType,
-  attributes
-) {
+function getAvgServiceLatency() {
+  if (latencyMetrics.serviceRequestCount === 0) return 0;
+  return parseFloat(
+    (latencyMetrics.totalServiceLatency / latencyMetrics.serviceRequestCount).toFixed(2)
+  );
+}
+
+// ========================
+// OTel Metric Builder
+// ========================
+
+function createMetric(metricName, metricValue, metricUnit, metricType, valueType, attributes) {
   attributes = { ...attributes, source: config.metrics.source };
 
   const metric = {
@@ -106,8 +133,7 @@ function createMetric(
   });
 
   if (metricType === "sum") {
-    metric[metricType].aggregationTemporality =
-      "AGGREGATION_TEMPORALITY_CUMULATIVE";
+    metric[metricType].aggregationTemporality = "AGGREGATION_TEMPORALITY_CUMULATIVE";
     metric[metricType].isMonotonic = true;
   }
 
@@ -115,8 +141,6 @@ function createMetric(
 }
 
 function sendMetricToGrafana(metrics) {
-  console.log("Sending metrics with accountId:", config.metrics.accountId);
-  console.log("API key starts with:", config.metrics.apiKey?.substring(0, 10));
   const body = {
     resourceMetrics: [
       {
@@ -149,103 +173,41 @@ function sendMetricToGrafana(metrics) {
     });
 }
 
+// ========================
+// Periodic Reporting
+// ========================
+
 function sendMetricsPeriodically(period = 10000) {
   setInterval(() => {
     try {
       const metrics = [];
 
+      // HTTP request counts per endpoint
       Object.keys(requests).forEach((endpoint) => {
         metrics.push(
-          createMetric("request", requests[endpoint], "1", "sum", "asInt", {
-            endpoint,
-          })
+          createMetric("request", requests[endpoint], "1", "sum", "asInt", { endpoint })
         );
       });
 
-      metrics.push(
-        createMetric(
-          "auth",
-          authMetrics.successfulLogins,
-          "1",
-          "sum",
-          "asInt",
-          { result: "success" }
-        )
-      );
-      metrics.push(
-        createMetric("auth", authMetrics.failedLogins, "1", "sum", "asInt", {
-          result: "failure",
-        })
-      );
+      // Auth metrics
+      metrics.push(createMetric("auth", authMetrics.successfulLogins, "1", "sum", "asInt", { result: "success" }));
+      metrics.push(createMetric("auth", authMetrics.failedLogins, "1", "sum", "asInt", { result: "failure" }));
 
-      metrics.push(
-        createMetric(
-          "users",
-          userMetrics.activeUsers,
-          "1",
-          "gauge",
-          "asInt",
-          {}
-        )
-      );
+      // Active users
+      metrics.push(createMetric("users", userMetrics.activeUsers, "1", "gauge", "asInt", {}));
 
-      metrics.push(
-        createMetric(
-          "cpu",
-          getCpuUsagePercentage(),
-          "%",
-          "gauge",
-          "asDouble",
-          {}
-        )
-      );
-      metrics.push(
-        createMetric(
-          "memory",
-          getMemoryUsagePercentage(),
-          "%",
-          "gauge",
-          "asDouble",
-          {}
-        )
-      );
+      // System metrics
+      metrics.push(createMetric("cpu", getCpuUsagePercentage(), "%", "gauge", "asDouble", {}));
+      metrics.push(createMetric("memory", getMemoryUsagePercentage(), "%", "gauge", "asDouble", {}));
 
-      metrics.push(
-        createMetric("pizza", purchaseMetrics.pizzasSold, "1", "sum", "asInt", {
-          type: "sold",
-        })
-      );
-      metrics.push(
-        createMetric(
-          "pizza",
-          purchaseMetrics.creationFailures,
-          "1",
-          "sum",
-          "asInt",
-          { type: "failure" }
-        )
-      );
-      metrics.push(
-        createMetric(
-          "revenue",
-          purchaseMetrics.revenue,
-          "USD",
-          "sum",
-          "asDouble",
-          {}
-        )
-      );
+      // Pizza metrics
+      metrics.push(createMetric("pizza", purchaseMetrics.pizzasSold, "1", "sum", "asInt", { type: "sold" }));
+      metrics.push(createMetric("pizza", purchaseMetrics.creationFailures, "1", "sum", "asInt", { type: "failure" }));
+      metrics.push(createMetric("revenue", purchaseMetrics.revenue, "USD", "sum", "asDouble", {}));
 
-      metrics.push(
-        createMetric(
-          "latency",
-          getAvgPizzaLatency(),
-          "ms",
-          "gauge",
-          "asDouble",
-          { type: "pizza" }
-        )
-      );
+      // Latency metrics
+      metrics.push(createMetric("latency", getAvgPizzaLatency(), "ms", "gauge", "asDouble", { type: "pizza" }));
+      metrics.push(createMetric("latency", getAvgServiceLatency(), "ms", "gauge", "asDouble", { type: "service" }));
 
       sendMetricToGrafana(metrics);
     } catch (error) {
@@ -255,6 +217,10 @@ function sendMetricsPeriodically(period = 10000) {
 
   console.log(`Metrics reporting started — pushing every ${period / 1000}s`);
 }
+
+// ========================
+// Exports
+// ========================
 
 module.exports = {
   requestTracker,
