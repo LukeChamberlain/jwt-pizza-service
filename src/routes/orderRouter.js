@@ -4,6 +4,7 @@ const { Role, DB } = require("../database/database.js");
 const { authRouter } = require("./authRouter.js");
 const { asyncHandler, StatusCodeError } = require("../endpointHelper.js");
 const metrics = require("../metrics.js");
+const logger = require("../logger.js");
 
 const orderRouter = express.Router();
 
@@ -129,6 +130,7 @@ orderRouter.post(
       }),
     });
     const j = await r.json();
+    logger.logFactory(order, j, r.status);
     const latency = Date.now() - start;
     if (r.ok) {
       const price = order.items.reduce((sum, i) => sum + i.price, 0); 
